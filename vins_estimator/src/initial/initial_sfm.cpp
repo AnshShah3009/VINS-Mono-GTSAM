@@ -133,12 +133,12 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 	//cout << "init t_l " << T[l].transpose() << endl;
 
 	//rotate to cam frame
-	Matrix3d c_Rotation[frame_num];
-	Vector3d c_Translation[frame_num];
-	Quaterniond c_Quat[frame_num];
-	double c_rotation[frame_num][4];
-	double c_translation[frame_num][3];
-	Eigen::Matrix<double, 3, 4> Pose[frame_num];
+	std::vector<Eigen::Matrix3d> c_Rotation(frame_num);
+	std::vector<Eigen::Vector3d> c_Translation(frame_num);
+	std::vector<Eigen::Quaterniond> c_Quat(frame_num);
+	std::vector<std::array<double, 4>> c_rotation(frame_num);
+	std::vector<std::array<double, 3>> c_translation(frame_num);
+	std::vector<Eigen::Matrix<double, 3, 4>> Pose(frame_num);
 
 	c_Quat[l] = q[l].inverse();
 	c_Rotation[l] = c_Quat[l].toRotationMatrix();
@@ -231,7 +231,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 */
 	//full BA
 	ceres::Problem problem;
-	ceres::LocalParameterization* local_parameterization = new ceres::QuaternionParameterization();
+	ceres::Manifold* manifold = new ceres::QuaternionManifold();
 	//cout << " begin full BA " << endl;
 	for (int i = 0; i < frame_num; i++)
 	{
@@ -243,15 +243,16 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		c_rotation[i][1] = c_Quat[i].x();
 		c_rotation[i][2] = c_Quat[i].y();
 		c_rotation[i][3] = c_Quat[i].z();
-		problem.AddParameterBlock(c_rotation[i], 4, local_parameterization);
-		problem.AddParameterBlock(c_translation[i], 3);
+		problem.AddParameterBlock(c_rotation[i].data(), 4);
+		problem.SetManifold(c_rotation[i].data(), manifold);
+		problem.AddParameterBlock(c_translation[i].data(), 3);
 		if (i == l)
 		{
-			problem.SetParameterBlockConstant(c_rotation[i]);
+			problem.SetParameterBlockConstant(c_rotation[i].data());
 		}
 		if (i == l || i == frame_num - 1)
 		{
-			problem.SetParameterBlockConstant(c_translation[i]);
+			problem.SetParameterBlockConstant(c_translation[i].data());
 		}
 	}
 
@@ -266,7 +267,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 												sfm_f[i].observation[j].second.x(),
 												sfm_f[i].observation[j].second.y());
 
-    		problem.AddResidualBlock(cost_function, NULL, c_rotation[l], c_translation[l], 
+    		problem.AddResidualBlock(cost_function, NULL, c_rotation[l].data(), c_translation[l].data(), 
     								sfm_f[i].position);	 
 		}
 

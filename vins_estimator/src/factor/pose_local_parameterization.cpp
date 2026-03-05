@@ -17,7 +17,7 @@ bool PoseLocalParameterization::Plus(const double *x, const double *delta, doubl
 
     return true;
 }
-bool PoseLocalParameterization::ComputeJacobian(const double *x, double *jacobian) const
+bool PoseLocalParameterization::PlusJacobian(const double *x, double *jacobian) const
 {
     Eigen::Map<Eigen::Matrix<double, 7, 6, Eigen::RowMajor>> j(jacobian);
     j.topRows<6>().setIdentity();

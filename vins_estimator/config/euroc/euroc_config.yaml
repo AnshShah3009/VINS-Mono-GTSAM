@@ -3,7 +3,7 @@
 #common parameters
 imu_topic: "/imu0"
 image_topic: "/cam0/image_raw"
-output_path: "/home/baymax/Desktop/Ansh-VINS/Data/output/"
+output_path: "/home/prathana/Desktop/gtsam/data/output/"
 
 #camera calibration 
 model_type: PINHOLE
@@ -66,7 +66,7 @@ g_norm: 9.81007     # gravity magnitude
 loop_closure: 1                    # start loop closure
 load_previous_pose_graph: 0        # load and reuse previous pose graph; load from 'pose_graph_save_path'
 fast_relocalization: 0             # useful in real-time and large project
-pose_graph_save_path: "/home/baymax/Desktop/Data/output/pose_graph/" # save and load path
+pose_graph_save_path: "/home/prathana/Desktop/gtsam/data/output/pose_graph/" # save and load path
 
 #unsynchronization parameters
 estimate_td: 0                      # online estimate time offset between camera and imu
@@ -80,4 +80,4 @@ rolling_shutter_tr: 0               # unit: s. rolling shutter read out time per
 save_image: 1                   # save image in pose graph for visualization prupose; you can close this function by setting 0 
 visualize_imu_forward: 0        # output imu forward propogation to achieve low latency and high frequence results
 visualize_camera_size: 0.4      # size of camera marker in RVIZ
-loop_closure_disable_with_gtsam: 1
+loop_closure_detection: 1

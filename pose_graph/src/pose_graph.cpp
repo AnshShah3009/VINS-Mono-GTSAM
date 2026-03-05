@@ -8,14 +8,16 @@ PoseGraph::PoseGraph()
 
     // requires edit for gtsam
     priorModel = gtsam::noiseModel::Diagonal::Sigmas((Eigen::VectorXd(6) << 0, 0, 0, 0, 0, 0).finished());
+    gravityPriorModel = gtsam::noiseModel::Diagonal::Sigmas((Eigen::VectorXd(6) << 0.01, 0.01, 10000.0, 10000.0, 10000.0, 10000.0).finished()); // Lock roll/pitch tightly
     odometryModel = gtsam::noiseModel::Diagonal::Sigmas((Eigen::VectorXd(6) << 1e-5, 1e-5, 1e-5, 1e-3, 1e-3, 1e-3).finished());
     loopModel = gtsam::noiseModel::Diagonal::Sigmas((Eigen::VectorXd(6) << 0.001, 0.001, 0.001, 0.05, 0.05, 0.05).finished());
     infiModel = gtsam::noiseModel::Isotropic::Sigmas((Eigen::VectorXd(6) << 6.283, 6.283, 6.283, 10000, 10000, 10000).finished());
     addedFactorsTill = -1;
 
     // setting up params for gtsam optimizer
-    params.relativeErrorTol = 1e-6;
-    params.maxIterations = 10000;
+    // isam2_params.reloginTol = 1e-6;
+    isam2_params.factorization = gtsam::ISAM2Params::CHOLESKY;
+    isam2 = new gtsam::ISAM2(isam2_params);
 
     t_optimization = std::thread(&PoseGraph::optimize4DoF, this); // thread to run optimization
 
@@ -38,14 +40,15 @@ PoseGraph::~PoseGraph()
 }
 
 // for Ros Publishers to advertise topics : pose_graph_path, base_path, path_1, path_3 .... till 9
-void PoseGraph::registerPub(ros::NodeHandle &n)
+void PoseGraph::registerPub(rclcpp::Node::SharedPtr n)
 {
-    pub_pg_path = n.advertise<nav_msgs::Path>("pose_graph_path", 1000);
-    pub_base_path = n.advertise<nav_msgs::Path>("base_path", 1000);
-    pub_pose_graph = n.advertise<visualization_msgs::MarkerArray>("pose_graph", 1000);
+    pub_pg_path = n->create_publisher<nav_msgs::msg::Path>("pose_graph_path", 1000);
+    pub_base_path = n->create_publisher<nav_msgs::msg::Path>("base_path", 1000);
+    pub_pose_graph = n->create_publisher<visualization_msgs::msg::MarkerArray>("pose_graph", 1000);
     for (int i = 1; i < 10; i++)
-        pub_path[i] = n.advertise<nav_msgs::Path>("path_" + to_string(i), 1000);
+        pub_path[i] = n->create_publisher<nav_msgs::msg::Path>("path_" + std::to_string(i), 1000);
 }
+
 
 // To load descriptor vocabulary (can use anytype of descriptor)
 void PoseGraph::loadVocabulary(std::string voc_path)
@@ -116,7 +119,7 @@ void PoseGraph::addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
 
             Vector3d w_P_old, w_P_cur, vio_P_cur;
             Matrix3d w_R_old, w_R_cur, vio_R_cur;
-            old_kf->getVioPose(w_P_old, w_R_old); // refer to optimized path instead of vio path //TODO
+            old_kf->getPose(w_P_old, w_R_old); // refer to globally optimized path instead of local VIO path (fixed)
             cur_kf->getVioPose(vio_P_cur, vio_R_cur);
 
             Vector3d relative_t;
@@ -187,8 +190,8 @@ void PoseGraph::addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
     R = r_drift * R;
     cur_kf->updatePose(P, R);
     Quaterniond Q{R};
-    geometry_msgs::PoseStamped pose_stamped;
-    pose_stamped.header.stamp = ros::Time(cur_kf->time_stamp);
+    geometry_msgs::msg::PoseStamped pose_stamped;
+    pose_stamped.header.stamp = rclcpp::Time(static_cast<uint64_t>(cur_kf->time_stamp * 1e9));
     pose_stamped.header.frame_id = "world";
     pose_stamped.pose.position.x = P.x() + VISUALIZATION_SHIFT_X;
     pose_stamped.pose.position.y = P.y() + VISUALIZATION_SHIFT_Y;
@@ -199,6 +202,7 @@ void PoseGraph::addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
     pose_stamped.pose.orientation.w = Q.w();
     path[sequence_cnt].poses.push_back(pose_stamped);
     path[sequence_cnt].header = pose_stamped.header;
+
 
     if (SAVE_LOOP_PATH)
     {
@@ -294,11 +298,15 @@ void PoseGraph::addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
         gtsam::Pose3 T0 = gtsam::Pose3(gtsam::Rot3(R0), gtsam::Point3(P0));
         gtsam::Pose3 T1 = gtsam::Pose3(gtsam::Rot3(R1), gtsam::Point3(P1));
         gtsam::Pose3 Tf = T0.inverse() * T1;
-
-        Rf = R0 * R1.transpose();
-        Pf = R1 * (P1 - P0);
+        
         graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(cur_kf->index - 1, cur_kf->index, Tf, odometryModel);
-        // graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(cur_kf->index - 1, cur_kf->index, gtsam::Pose3(gtsam::Rot3(Rf), gtsam::Point3(Pf)), odometryModel);
+        
+        // Add gravity/4-DoF prior to lock roll and pitch to the VIO's extremely accurate gravity alignment
+        Matrix3d R_vio;
+        Vector3d P_vio;
+        cur_kf->getVioPose(P_vio, R_vio);
+        gtsam::Pose3 T_gravity_prior(gtsam::Rot3(R_vio), gtsam::Point3(0,0,0)); 
+        graph.addPrior(cur_kf->index, T_gravity_prior, gravityPriorModel);
     }
 
     m_posegraph.unlock();
@@ -318,6 +326,8 @@ void PoseGraph::loadKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
     cur_kf->index = global_index;
     global_index++;
     int loop_index = -1;
+    int loop_flag = -1;
+    
     if (flag_detect_loop)
     {
         loop_index = detectLoop(cur_kf, cur_kf->index);
@@ -334,6 +344,32 @@ void PoseGraph::loadKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
         {
             if (earliest_loop_index > loop_index || earliest_loop_index == -1)
                 earliest_loop_index = loop_index;
+                
+            Vector3d w_P_old, w_P_cur, vio_P_cur;
+            Matrix3d w_R_old, w_R_cur, vio_R_cur;
+            old_kf->getPose(w_P_old, w_R_old);
+            cur_kf->getVioPose(vio_P_cur, vio_R_cur);
+
+            Vector3d relative_t;
+            Quaterniond relative_q;
+            relative_t = cur_kf->getLoopRelativeT();
+            relative_q = (cur_kf->getLoopRelativeQ()).toRotationMatrix();
+            w_P_cur = w_R_old * relative_t + w_P_old;
+            w_R_cur = w_R_old * relative_q;
+            
+            // GTSAM ISAM2 Factor setup
+            Vector3d gtsam_rel_t = cur_kf->getLoopRelativeT();
+            double gtsam_rel_yaw = cur_kf->getLoopRelativeYaw();
+            Quaterniond gtsam_rel_q(Utility::ypr2R(Vector3d(gtsam_rel_yaw, 0, 0)));
+            Matrix3d gtsam_rel_r = gtsam_rel_q.toRotationMatrix();
+            
+            m_posegraph.lock();
+            double lock = gtsam_rel_t.norm() / 5;
+            gtsam::noiseModel::Diagonal::shared_ptr loop_noise = gtsam::noiseModel::Diagonal::Sigmas((Eigen::VectorXd(6) << 0.05, 0.05, 0.05, lock, lock, lock).finished());
+            graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(old_kf->index, cur_kf->index, gtsam::Pose3(gtsam::Rot3(gtsam_rel_r), gtsam::Point3(-gtsam_rel_t)), loop_noise);
+            loop_flag = 1;
+            m_posegraph.unlock();
+
             m_optimize_buf.lock();
             optimize_buf.push(cur_kf->index);
             m_optimize_buf.unlock();
@@ -342,13 +378,50 @@ void PoseGraph::loadKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
 
     m_keyframelist.lock();
 
+    m_posegraph.lock();
+    addedFactorsTill = cur_kf->index;
+    
+    Matrix3d R0;
+    Vector3d P0;
+    if (loop_flag != 1) {
+        cur_kf->getPose(P0, R0);
+        initial.insert(cur_kf->index, gtsam::Pose3(gtsam::Rot3(R0), gtsam::Point3(P0)));
+    }
+    
+    if (cur_kf->index == 0)
+    {
+        cur_kf->getPose(P0, R0);
+        graph.addPrior(cur_kf->index, gtsam::Pose3(gtsam::Rot3(R0), gtsam::Point3(P0)), priorModel);
+    }
+    else
+    {
+        Vector3d P1, Pf;
+        Matrix3d R1, Rf;
+        cur_kf->getPose(P1, R1);
+        getKeyFrame(cur_kf->index - 1)->getPose(P0, R0);
+
+        gtsam::Pose3 T0 = gtsam::Pose3(gtsam::Rot3(R0), gtsam::Point3(P0));
+        gtsam::Pose3 T1 = gtsam::Pose3(gtsam::Rot3(R1), gtsam::Point3(P1));
+        gtsam::Pose3 Tf = T0.inverse() * T1;
+        
+        graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(cur_kf->index - 1, cur_kf->index, Tf, odometryModel);
+        
+        // Add 4-DoF Gravity Prior for loaded frame
+        Matrix3d R_vio;
+        Vector3d P_vio;
+        cur_kf->getVioPose(P_vio, R_vio);
+        gtsam::Pose3 T_gravity_prior(gtsam::Rot3(R_vio), gtsam::Point3(0,0,0)); 
+        graph.addPrior(cur_kf->index, T_gravity_prior, gravityPriorModel);
+    }
+    m_posegraph.unlock();
+
     Vector3d P;
     Matrix3d R;
     cur_kf->getPose(P, R);
     Quaterniond Q{R};
-    geometry_msgs::PoseStamped pose_stamped;
+    geometry_msgs::msg::PoseStamped pose_stamped;
     // setting up message
-    pose_stamped.header.stamp = ros::Time(cur_kf->time_stamp);
+    pose_stamped.header.stamp = rclcpp::Time(static_cast<uint64_t>(cur_kf->time_stamp * 1e9));
     pose_stamped.header.frame_id = "world";
     pose_stamped.pose.position.x = P.x() + VISUALIZATION_SHIFT_X;
     pose_stamped.pose.position.y = P.y() + VISUALIZATION_SHIFT_Y;
@@ -359,6 +432,7 @@ void PoseGraph::loadKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
     pose_stamped.pose.orientation.w = Q.w();
     base_path.poses.push_back(pose_stamped);
     base_path.header = pose_stamped.header;
+
 
     // draw local connection
     if (SHOW_S_EDGE)
@@ -531,49 +605,37 @@ void PoseGraph::optimize4DoF()
         // if we have any keyframes in optimize buff
         if (cur_index != -1)
         {
-            // printf("\n starting to optimize pose graph \n");
             TicToc tmp_t; // time at start of optimization
 
-            m_keyframelist.lock();
+            m_posegraph.lock();
+            // GTSAM ISAM2 optimization
+            isam2->update(graph, initial);
+            isam2->update();
+            
+            graph.resize(0);
+            initial.clear();
+            
+            gtsam::Values result = isam2->calculateEstimate();
+            m_posegraph.unlock();
 
+            m_keyframelist.lock();
             KeyFrame *cur_kf = getKeyFrame(cur_index);
 
             list<KeyFrame *>::iterator it;
-
-            m_keyframelist.unlock();
-
-            m_posegraph.lock();
-            // GTSAM optimization
-            gtsam::GaussNewtonOptimizer optimize(graph, initial, params);
-            gtsam::Values result = optimize.optimize();
-            // result.print("\n Result of optimization : ");
-
-            m_posegraph.unlock();
-
-            int i = 0; // keeps track of keyframe index in the outter loop
-
-            m_keyframelist.lock();
-            // loop to update pose in vins estimator (needs change for gtsam)
-            // std::cout << "Going into keyframe loop \n";
-
             for (it = keyframelist.begin(); it != keyframelist.end(); it++)
             {
-                Vector3d tmp_t = result.at<gtsam::Pose3>((*it)->index).translation();
-                // std::cout << "found translation \n";
-                auto tmp_q = result.at<gtsam::Pose3>((*it)->index).rotation();
-                // std::cout << "found rotation \n";
-                Matrix3d tmp_r = tmp_q.matrix();
-                Vector3d t_tmp;
-                Matrix3d r_tmp;
-                (*it)->updatePose(tmp_t, tmp_r);
+                if(result.exists((*it)->index)){
+                    Vector3d tmp_t = result.at<gtsam::Pose3>((*it)->index).translation();
+                    auto tmp_q = result.at<gtsam::Pose3>((*it)->index).rotation();
+                    Matrix3d tmp_r = tmp_q.matrix();
+                    (*it)->updatePose(tmp_t, tmp_r);
+                }
 
                 if ((*it)->index == cur_index)
                     break;
-                i++;
             }
             printf("pose optimization time: %f \n", tmp_t.toc());
 
-            // std::cout << "out of keyframe loop \n";
             Vector3d cur_t, vio_t;
             Matrix3d cur_r, vio_r;
             cur_kf->getPose(cur_t, cur_r);
@@ -635,8 +697,8 @@ void PoseGraph::updatePath()
         Q = R;
         // printf("path p: %f, %f, %f\n", P.x(), P.z(), P.y());
 
-        geometry_msgs::PoseStamped pose_stamped;
-        pose_stamped.header.stamp = ros::Time((*it)->time_stamp);
+        geometry_msgs::msg::PoseStamped pose_stamped;
+        pose_stamped.header.stamp = rclcpp::Time(static_cast<uint64_t>((*it)->time_stamp * 1e9));
         pose_stamped.header.frame_id = "world";
         pose_stamped.pose.position.x = P.x() + VISUALIZATION_SHIFT_X;
         pose_stamped.pose.position.y = P.y() + VISUALIZATION_SHIFT_Y;
@@ -645,6 +707,7 @@ void PoseGraph::updatePath()
         pose_stamped.pose.orientation.y = Q.y();
         pose_stamped.pose.orientation.z = Q.z();
         pose_stamped.pose.orientation.w = Q.w();
+
         if ((*it)->sequence == 0)
         {
             base_path.poses.push_back(pose_stamped);
@@ -922,15 +985,16 @@ void PoseGraph::publish()
         // if (sequence_loop[i] == true || i == base_sequence)
         if (1 || i == base_sequence)
         {
-            pub_pg_path.publish(path[i]);
-            pub_path[i].publish(path[i]);
+            pub_pg_path->publish(path[i]);
+            pub_path[i]->publish(path[i]);
             posegraph_visualization->publish_by(pub_pose_graph, path[sequence_cnt].header);
         }
     }
     base_path.header.frame_id = "world";
-    pub_base_path.publish(base_path);
+    pub_base_path->publish(base_path);
     // posegraph_visualization->publish_by(pub_pose_graph, path[sequence_cnt].header);
 }
+
 
 // to update keyframe loop like shift, given recolisatoin 0 no not needed for now
 void PoseGraph::updateKeyFrameLoop(int index, Eigen::Matrix<double, 8, 1> &_loop_info)

@@ -1,22 +1,27 @@
 #ifndef EIGENQUATERNIONPARAMETERIZATION_H
 #define EIGENQUATERNIONPARAMETERIZATION_H
 
-#include "ceres/local_parameterization.h"
+#include "ceres/manifold.h"
 
 namespace camodocal
 {
 
-class EigenQuaternionParameterization : public ceres::LocalParameterization
+class EigenQuaternionParameterization : public ceres::Manifold
 {
 public:
     virtual ~EigenQuaternionParameterization() {}
     virtual bool Plus(const double* x,
                       const double* delta,
                       double* x_plus_delta) const;
-    virtual bool ComputeJacobian(const double* x,
+    virtual bool PlusJacobian(const double* x,
                                  double* jacobian) const;
-    virtual int GlobalSize() const { return 4; }
-    virtual int LocalSize() const { return 3; }
+    virtual bool Minus(const double* y,
+                       const double* x,
+                       double* y_minus_x) const { return false; }
+    virtual bool MinusJacobian(const double* x,
+                               double* jacobian) const { return false; }
+    virtual int AmbientSize() const { return 4; }
+    virtual int TangentSize() const { return 3; }
 
 private:
     template<typename T>

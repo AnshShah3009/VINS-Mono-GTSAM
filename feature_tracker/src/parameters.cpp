@@ -19,31 +19,52 @@ int FISHEYE;
 bool PUB_THIS_FRAME;
 
 template <typename T>
-T readParam(ros::NodeHandle &n, std::string name)
+T readParam(std::shared_ptr<rclcpp::Node> n, std::string name)
 {
     T ans;
-    if (n.getParam(name, ans))
+    if (n->has_parameter(name))
     {
-        ROS_INFO_STREAM("Loaded " << name << ": " << ans);
+        n->get_parameter(name, ans);
+        RCLCPP_INFO_STREAM(n->get_logger(), "Loaded " << name << ": " << ans);
     }
     else
     {
-        ROS_ERROR_STREAM("Failed to load " << name);
-        n.shutdown();
+        ans = n->declare_parameter<T>(name, T());
+        if (n->get_parameter(name, ans))
+        {
+             RCLCPP_INFO_STREAM(n->get_logger(), "Loaded " << name << ": " << ans);
+        }
+        else
+        {
+            RCLCPP_ERROR_STREAM(n->get_logger(), "Failed to load " << name);
+            throw std::runtime_error("Failed to load parameter: " + name);
+        }
     }
     return ans;
 }
 
-void readParameters(ros::NodeHandle &n)
+void readParameters(std::shared_ptr<rclcpp::Node> n)
 {
     std::string config_file;
-    config_file = readParam<std::string>(n, "config_file");
+    try {
+        config_file = readParam<std::string>(n, "config_file");
+    } catch (const std::exception& e) {
+         RCLCPP_ERROR(n->get_logger(), "Please provide config_file path as a parameter");
+         return;
+    }
+    
     cv::FileStorage fsSettings(config_file, cv::FileStorage::READ);
     if(!fsSettings.isOpened())
     {
         std::cerr << "ERROR: Wrong path to settings" << std::endl;
     }
-    std::string VINS_FOLDER_PATH = readParam<std::string>(n, "vins_folder");
+    
+    std::string VINS_FOLDER_PATH;
+    try {
+        VINS_FOLDER_PATH = readParam<std::string>(n, "vins_folder");
+    } catch (...) {
+        VINS_FOLDER_PATH = "./"; 
+    }
 
     fsSettings["image_topic"] >> IMAGE_TOPIC;
     fsSettings["imu_topic"] >> IMU_TOPIC;
@@ -69,6 +90,5 @@ void readParameters(ros::NodeHandle &n)
         FREQ = 100;
 
     fsSettings.release();
-
-
 }
+

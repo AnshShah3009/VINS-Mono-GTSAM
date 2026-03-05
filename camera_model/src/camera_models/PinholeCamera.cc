@@ -210,6 +210,19 @@ PinholeCamera::Parameters::writeToYamlFile(const std::string& filename) const
     fs.release();
 }
 
+PinholeCamera::Parameters::Parameters(const PinholeCamera::Parameters& other)
+ : Camera::Parameters(other)
+{
+    m_k1 = other.m_k1;
+    m_k2 = other.m_k2;
+    m_p1 = other.m_p1;
+    m_p2 = other.m_p2;
+    m_fx = other.m_fx;
+    m_fy = other.m_fy;
+    m_cx = other.m_cx;
+    m_cy = other.m_cy;
+}
+
 PinholeCamera::Parameters&
 PinholeCamera::Parameters::operator=(const PinholeCamera::Parameters& other)
 {

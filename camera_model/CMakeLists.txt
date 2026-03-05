@@ -1,41 +1,31 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.5)
 project(camera_model)
 
-set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-std=c++14")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fPIC")
+# Default to C++14
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
 
-find_package(catkin REQUIRED COMPONENTS
-    roscpp
-    std_msgs
-    )
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic -O3 -fPIC)
+endif()
 
-find_package(Boost REQUIRED COMPONENTS filesystem program_options system)
-include_directories(${Boost_INCLUDE_DIRS})
-
+# Find dependencies
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
-
-# set(EIGEN_INCLUDE_DIR "/usr/local/include/eigen3")
+find_package(Boost REQUIRED COMPONENTS filesystem program_options system)
 find_package(Ceres REQUIRED)
-include_directories(${CERES_INCLUDE_DIRS})
-
-
-catkin_package(
-    INCLUDE_DIRS include
-    LIBRARIES camera_model
-    CATKIN_DEPENDS roscpp std_msgs
-#    DEPENDS system_lib
-    )
+find_package(Eigen3 REQUIRED)
 
 include_directories(
-    ${catkin_INCLUDE_DIRS}
-    )
+  include
+  ${EIGEN3_INCLUDE_DIR}
+  ${CERES_INCLUDE_DIRS}
+)
 
-include_directories("include")
-
-
-add_executable(Calibration 
-    src/intrinsic_calib.cc
+set(CAMERA_MODEL_SRC
     src/chessboard/Chessboard.cc
     src/calib/CameraCalibration.cc
     src/camera_models/Camera.cc
@@ -47,21 +37,51 @@ add_executable(Calibration
     src/camera_models/ScaramuzzaCamera.cc
     src/sparse_graph/Transform.cc
     src/gpl/gpl.cc
-    src/gpl/EigenQuaternionParameterization.cc)
+    src/gpl/EigenQuaternionParameterization.cc
+)
 
-add_library(camera_model
-    src/chessboard/Chessboard.cc
-    src/calib/CameraCalibration.cc
-    src/camera_models/Camera.cc
-    src/camera_models/CameraFactory.cc
-    src/camera_models/CostFunctionFactory.cc
-    src/camera_models/PinholeCamera.cc
-    src/camera_models/CataCamera.cc
-    src/camera_models/EquidistantCamera.cc
-    src/camera_models/ScaramuzzaCamera.cc
-    src/sparse_graph/Transform.cc
-    src/gpl/gpl.cc
-    src/gpl/EigenQuaternionParameterization.cc)
+add_library(${PROJECT_NAME} ${CAMERA_MODEL_SRC})
+target_include_directories(${PROJECT_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(${PROJECT_NAME}
+  rclcpp
+  std_msgs
+  OpenCV
+)
+target_link_libraries(${PROJECT_NAME} 
+  ${Boost_LIBRARIES} 
+  ${CERES_LIBRARIES}
+)
 
-target_link_libraries(Calibration ${Boost_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES})
-target_link_libraries(camera_model ${Boost_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES})
+add_executable(Calibration src/intrinsic_calib.cc ${CAMERA_MODEL_SRC})
+target_include_directories(Calibration PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+ament_target_dependencies(Calibration
+  rclcpp
+  std_msgs
+  OpenCV
+)
+target_link_libraries(Calibration 
+  ${Boost_LIBRARIES} 
+  ${CERES_LIBRARIES}
+)
+
+# Export and install
+ament_export_include_directories(include)
+ament_export_libraries(${PROJECT_NAME})
+ament_export_dependencies(rclcpp std_msgs OpenCV Ceres Boost Eigen3)
+
+install(TARGETS ${PROJECT_NAME} Calibration
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY include/
+  DESTINATION include
+)
+
+ament_package()

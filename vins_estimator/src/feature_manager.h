@@ -10,8 +10,8 @@ using namespace std;
 #include <eigen3/Eigen/Dense>
 using namespace Eigen;
 
-#include <ros/console.h>
-#include <ros/assert.h>
+#include <rclcpp/logging.hpp>
+#include <cassert>
 
 #include "parameters.h"
 

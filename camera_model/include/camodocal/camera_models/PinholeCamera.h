@@ -44,6 +44,7 @@ public:
         bool readFromYamlFile(const std::string& filename);
         void writeToYamlFile(const std::string& filename) const;
 
+        Parameters(const Parameters& other);
         Parameters& operator=(const Parameters& other);
         friend std::ostream& operator<< (std::ostream& out, const Parameters& params);
 

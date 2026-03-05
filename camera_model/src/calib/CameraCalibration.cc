@@ -503,11 +503,11 @@ CameraCalibration::optimize(CameraPtr& camera,
                                      transformVec.at(i).translationData());
         }
 
-        ceres::LocalParameterization* quaternionParameterization =
+        ceres::Manifold* quaternionParameterization =
             new EigenQuaternionParameterization;
 
-        problem.SetParameterization(transformVec.at(i).rotationData(),
-                                    quaternionParameterization);
+        problem.SetManifold(transformVec.at(i).rotationData(),
+                            quaternionParameterization);
     }
 
     std::cout << "begin ceres" << std::endl;

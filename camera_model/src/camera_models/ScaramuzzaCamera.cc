@@ -137,6 +137,19 @@ OCAMCamera::Parameters::writeToYamlFile(const std::string& filename) const
     fs.release();
 }
 
+OCAMCamera::Parameters::Parameters(const OCAMCamera::Parameters& other)
+ : Camera::Parameters(other)
+{
+    m_C = other.m_C;
+    m_D = other.m_D;
+    m_E = other.m_E;
+    m_center_x = other.m_center_x;
+    m_center_y = other.m_center_y;
+
+    memcpy(m_poly, other.m_poly, sizeof(double) * SCARAMUZZA_POLY_SIZE);
+    memcpy(m_inv_poly, other.m_inv_poly, sizeof(double) * SCARAMUZZA_INV_POLY_SIZE);
+}
+
 OCAMCamera::Parameters&
 OCAMCamera::Parameters::operator=(const OCAMCamera::Parameters& other)
 {

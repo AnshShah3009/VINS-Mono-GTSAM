@@ -33,8 +33,8 @@ EigenQuaternionParameterization::Plus(const double* x,
 }
 
 bool
-EigenQuaternionParameterization::ComputeJacobian(const double* x,
-                                                 double* jacobian) const
+EigenQuaternionParameterization::PlusJacobian(const double* x,
+                                              double* jacobian) const
 {
     jacobian[0] =  x[3]; jacobian[1]  =  x[2]; jacobian[2]  = -x[1];  // NOLINT
     jacobian[3] = -x[2]; jacobian[4]  =  x[3]; jacobian[5]  =  x[0];  // NOLINT

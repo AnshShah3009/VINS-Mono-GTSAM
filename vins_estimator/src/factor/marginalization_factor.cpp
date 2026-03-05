@@ -32,7 +32,7 @@ void ResidualBlockInfo::Evaluate()
     //}
     //Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(tmp);
     //std::cout << saes.eigenvalues() << std::endl;
-    //ROS_ASSERT(saes.eigenvalues().minCoeff() >= -1e-6);
+    //assert(saes.eigenvalues().minCoeff() >= -1e-6);
 
     if (loss_function)
     {
@@ -70,7 +70,7 @@ void ResidualBlockInfo::Evaluate()
 
 MarginalizationInfo::~MarginalizationInfo()
 {
-    //ROS_WARN("release marginlizationinfo");
+    //RCLCPP_WARN(rclcpp::get_logger("vins_estimator"), "release marginlizationinfo");
     
     for (auto it = parameter_block_data.begin(); it != parameter_block_data.end(); ++it)
         delete[] it->second;
@@ -193,7 +193,7 @@ void MarginalizationInfo::marginalize()
 
     n = pos - m;
 
-    //ROS_DEBUG("marginalization, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
+    //RCLCPP_DEBUG(rclcpp::get_logger("vins_estimator"), "marginalization, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
 
     TicToc t_summing;
     Eigen::MatrixXd A(pos, pos);
@@ -224,7 +224,7 @@ void MarginalizationInfo::marginalize()
             b.segment(idx_i, size_i) += jacobian_i.transpose() * it->residuals;
         }
     }
-    ROS_INFO("summing up costs %f ms", t_summing.toc());
+    RCLCPP_INFO(rclcpp::get_logger("vins_estimator"), "summing up costs %f ms", t_summing.toc());
     */
     //multi thread
 
@@ -249,8 +249,8 @@ void MarginalizationInfo::marginalize()
         int ret = pthread_create( &tids[i], NULL, ThreadsConstructA ,(void*)&(threadsstruct[i]));
         if (ret != 0)
         {
-            ROS_WARN("pthread_create error");
-            ROS_BREAK();
+            RCLCPP_WARN(rclcpp::get_logger("vins_estimator"), "pthread_create error");
+            assert(false);
         }
     }
     for( int i = NUM_THREADS - 1; i >= 0; i--)  
@@ -259,15 +259,15 @@ void MarginalizationInfo::marginalize()
         A += threadsstruct[i].A;
         b += threadsstruct[i].b;
     }
-    //ROS_DEBUG("thread summing up costs %f ms", t_thread_summing.toc());
-    //ROS_INFO("A diff %f , b diff %f ", (A - tmp_A).sum(), (b - tmp_b).sum());
+    //RCLCPP_DEBUG(rclcpp::get_logger("vins_estimator"), "thread summing up costs %f ms", t_thread_summing.toc());
+    //RCLCPP_INFO(rclcpp::get_logger("vins_estimator"), "A diff %f , b diff %f ", (A - tmp_A).sum(), (b - tmp_b).sum());
 
 
     //TODO
     Eigen::MatrixXd Amm = 0.5 * (A.block(0, 0, m, m) + A.block(0, 0, m, m).transpose());
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(Amm);
 
-    //ROS_ASSERT_MSG(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
+    //assert(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
 
     Eigen::MatrixXd Amm_inv = saes.eigenvectors() * Eigen::VectorXd((saes.eigenvalues().array() > eps).select(saes.eigenvalues().array().inverse(), 0)).asDiagonal() * saes.eigenvectors().transpose();
     //printf("error1: %f\n", (Amm * Amm_inv - Eigen::MatrixXd::Identity(m, m)).sum());

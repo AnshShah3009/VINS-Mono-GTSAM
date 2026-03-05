@@ -9,11 +9,11 @@
 #include <ceres/rotation.h>
 #include <queue>
 #include <assert.h>
-#include <nav_msgs/Path.h>
-#include <geometry_msgs/PointStamped.h>
-#include <nav_msgs/Odometry.h>
+#include <nav_msgs/msg/path.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <stdio.h>
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include "keyframe.h"
 #include "utility/tic_toc.h"
 #include "utility/utility.h"
@@ -28,9 +28,11 @@
 #include <gtsam/nonlinear/GaussNewtonOptimizer.h>
 #include <gtsam/slam/dataset.h>
 #include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/slam/PriorFactor.h>
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/geometry/Point3.h>
 #include <gtsam/nonlinear/Values.h>
+#include <gtsam/nonlinear/ISAM2.h>
 
 #define SHOW_S_EDGE false
 #define SHOW_L_EDGE true
@@ -44,14 +46,14 @@ class PoseGraph
 public:
 	PoseGraph();
 	~PoseGraph();
-	void registerPub(ros::NodeHandle &n);						// to register publishers
+	void registerPub(rclcpp::Node::SharedPtr n);						// to register publishers
 	void addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop);	// to add keyframe to keyframelist, also adds factors to factor graph
 	void loadKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop); // to load keyframe to keyframelist, also adds factors to factor graph
 	void loadVocabulary(std::string voc_path);
 	void updateKeyFrameLoop(int index, Eigen::Matrix<double, 8, 1> &_loop_info);
 	KeyFrame *getKeyFrame(int index);
-	nav_msgs::Path path[10];
-	nav_msgs::Path base_path;
+	nav_msgs::msg::Path path[10];
+	nav_msgs::msg::Path base_path;
 	CameraPoseVisualization *posegraph_visualization;
 	void savePoseGraph();
 	void loadPoseGraph();
@@ -65,14 +67,15 @@ public:
 
 private:
 	//  variables for gtsam
-	// gtsam::nonlinear::ISAM2 *isam2;						   // gtsam isam2 optimizer
-	// gtsam::nonlinear::ISAM2params isam2_params;		   // gtsam isam2 parameters
+	gtsam::ISAM2 *isam2;						   // gtsam isam2 optimizer
+	gtsam::ISAM2Params isam2_params;		   // gtsam isam2 parameters
 	gtsam::GaussNewtonParams params;					   // gtsam GNC optimizer
 	gtsam::NonlinearFactorGraph graph;					   // factor graph pointer for gtsam
 	std::string g20File;								   // file name for g2o file
 	gtsam::Values initial;								   // to store dafault values
 	gtsam::Values optimized;							   // to store optimized values
 	gtsam::noiseModel::Diagonal::shared_ptr priorModel;	   // prior model error for gtsam
+	gtsam::noiseModel::Diagonal::shared_ptr gravityPriorModel; // model to enforce 4-DoF (lock roll/pitch)
 	gtsam::noiseModel::Diagonal::shared_ptr odometryModel; // odometry model error for gtsam
 	gtsam::noiseModel::Diagonal::shared_ptr infiniteModel; // to Add Prior for new sequences
 	gtsam::noiseModel::Diagonal::shared_ptr loopModel;	   // loop model error for gtsam
@@ -84,7 +87,7 @@ private:
 	void optimize4DoF();
 	void updatePath();
 
-	list<KeyFrame *> keyframelist; // all keyframe
+	std::list<KeyFrame *> keyframelist; // all keyframe
 
 	std::mutex m_keyframelist; // mutex lock for keyframelist
 	std::mutex m_optimize_buf; // mutext lock for for optimize_buf
@@ -100,8 +103,8 @@ private:
 
 	int global_index;
 	int sequence_cnt;
-	vector<bool> sequence_loop; // keeps track if the sequence has detected a loop clousre with any other sequence
-	map<int, cv::Mat> image_pool;
+	std::vector<bool> sequence_loop; // keeps track if the sequence has detected a loop clousre with any other sequence
+	std::map<int, cv::Mat> image_pool;
 	int earliest_loop_index;
 	int base_sequence;
 
@@ -109,10 +112,10 @@ private:
 	BriefVocabulary *voc;
 
 	// Publishers for paths
-	ros::Publisher pub_pg_path;
-	ros::Publisher pub_base_path;
-	ros::Publisher pub_pose_graph;
-	ros::Publisher pub_path[10];
+	rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_pg_path;
+	rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_base_path;
+	rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_pose_graph;
+	rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path[10];
 };
 
 // To normalize angle and get value between 0 to 360
@@ -171,115 +174,3 @@ void RotationMatrixRotatePoint(const T R[9], const T t[3], T r_t[3])
 	r_t[2] = R[6] * t[0] + R[7] * t[1] + R[8] * t[2];
 };
 
-// no use in gtsam
-class AngleLocalParameterization
-{
-public:
-	template <typename T>
-	bool operator()(const T *theta_radians, const T *delta_theta_radians,
-					T *theta_radians_plus_delta) const
-	{
-		*theta_radians_plus_delta =
-			NormalizeAngle(*theta_radians + *delta_theta_radians);
-
-		return true;
-	}
-
-	static ceres::LocalParameterization *Create()
-	{
-		return (new ceres::AutoDiffLocalParameterization<AngleLocalParameterization,
-														 1, 1>);
-	}
-};
-
-// no use in gtsam
-struct FourDOFError
-{
-	FourDOFError(double t_x, double t_y, double t_z, double relative_yaw, double pitch_i, double roll_i)
-		: t_x(t_x), t_y(t_y), t_z(t_z), relative_yaw(relative_yaw), pitch_i(pitch_i), roll_i(roll_i) {}
-
-	template <typename T>
-	bool operator()(const T *const yaw_i, const T *ti, const T *yaw_j, const T *tj, T *residuals) const
-	{
-		T t_w_ij[3];
-		t_w_ij[0] = tj[0] - ti[0];
-		t_w_ij[1] = tj[1] - ti[1];
-		t_w_ij[2] = tj[2] - ti[2];
-
-		// euler to rotation
-		T w_R_i[9];
-		YawPitchRollToRotationMatrix(yaw_i[0], T(pitch_i), T(roll_i), w_R_i);
-		// rotation transpose
-		T i_R_w[9];
-		RotationMatrixTranspose(w_R_i, i_R_w);
-		// rotation matrix rotate point
-		T t_i_ij[3];
-		RotationMatrixRotatePoint(i_R_w, t_w_ij, t_i_ij);
-
-		residuals[0] = (t_i_ij[0] - T(t_x));
-		residuals[1] = (t_i_ij[1] - T(t_y));
-		residuals[2] = (t_i_ij[2] - T(t_z));
-		residuals[3] = NormalizeAngle(yaw_j[0] - yaw_i[0] - T(relative_yaw));
-
-		return true;
-	}
-
-	static ceres::CostFunction *Create(const double t_x, const double t_y, const double t_z,
-									   const double relative_yaw, const double pitch_i, const double roll_i)
-	{
-		return (new ceres::AutoDiffCostFunction<
-				FourDOFError, 4, 1, 3, 1, 3>(
-			new FourDOFError(t_x, t_y, t_z, relative_yaw, pitch_i, roll_i)));
-	}
-
-	double t_x, t_y, t_z;
-	double relative_yaw, pitch_i, roll_i;
-};
-
-// no use in gtsam
-struct FourDOFWeightError
-{
-	FourDOFWeightError(double t_x, double t_y, double t_z, double relative_yaw, double pitch_i, double roll_i)
-		: t_x(t_x), t_y(t_y), t_z(t_z), relative_yaw(relative_yaw), pitch_i(pitch_i), roll_i(roll_i)
-	{
-		weight = 1;
-	}
-
-	template <typename T>
-	bool operator()(const T *const yaw_i, const T *ti, const T *yaw_j, const T *tj, T *residuals) const
-	{
-		T t_w_ij[3];
-		t_w_ij[0] = tj[0] - ti[0];
-		t_w_ij[1] = tj[1] - ti[1];
-		t_w_ij[2] = tj[2] - ti[2];
-
-		// euler to rotation
-		T w_R_i[9];
-		YawPitchRollToRotationMatrix(yaw_i[0], T(pitch_i), T(roll_i), w_R_i);
-		// rotation transpose
-		T i_R_w[9];
-		RotationMatrixTranspose(w_R_i, i_R_w);
-		// rotation matrix rotate point
-		T t_i_ij[3];
-		RotationMatrixRotatePoint(i_R_w, t_w_ij, t_i_ij);
-
-		residuals[0] = (t_i_ij[0] - T(t_x)) * T(weight);
-		residuals[1] = (t_i_ij[1] - T(t_y)) * T(weight);
-		residuals[2] = (t_i_ij[2] - T(t_z)) * T(weight);
-		residuals[3] = NormalizeAngle((yaw_j[0] - yaw_i[0] - T(relative_yaw))) * T(weight) / T(10.0);
-
-		return true;
-	}
-
-	static ceres::CostFunction *Create(const double t_x, const double t_y, const double t_z,
-									   const double relative_yaw, const double pitch_i, const double roll_i)
-	{
-		return (new ceres::AutoDiffCostFunction<
-				FourDOFWeightError, 4, 1, 3, 1, 3>(
-			new FourDOFWeightError(t_x, t_y, t_z, relative_yaw, pitch_i, roll_i)));
-	}
-
-	double t_x, t_y, t_z;
-	double relative_yaw, pitch_i, roll_i;
-	double weight;
-};
