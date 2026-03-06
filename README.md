@@ -1,8 +1,8 @@
-# VINS-Mono
+# VINS-Mono-GTSAM (ROS 2 Jazzy Port)
 
-## A Robust and Versatile Monocular Visual-Inertial State Estimator
+## A Robust and Versatile Monocular Visual-Inertial State Estimator (Ported to ROS 2)
 
-In this version, we have integrated a **GTSAM-based pose graph pipeline** for global optimization. While the **VIO front-end** continues to use the **Ceres solver** for sliding-window optimization, the back-end now leverages GTSAM to incorporate robust loop closure detection using the **GNC (Graduated Nonconvexity)** optimization method.
+This repository is a ROS 2 Jazzy port of the original VINS-Mono. In this version, we have integrated a **GTSAM-based pose graph pipeline** for global optimization. While the **VIO front-end** continues to use the modern **Ceres solver 2.2.0+** (using the new `Manifold` API) for sliding-window optimization, the back-end leverages GTSAM to incorporate robust loop closure detection using the **GNC (Graduated Nonconvexity)** optimization method. It is fully updated for C++17 and modern ROS 2 paradigms.
 
 **11 Jan 2019**: An extension of **VINS**, which supports stereo cameras / stereo cameras + IMU / mono camera + IMU, is published at [VINS-Fusion](https://github.com/HKUST-Aerial-Robotics/VINS-Fusion)
 
@@ -40,29 +40,33 @@ EuRoC dataset;                  Indoor and outdoor performance;                 
 
 ## 1. Prerequisites
 
-1.1 **Ubuntu** and **ROS**
-Ubuntu  16.04.
-ROS Kinetic. [ROS Installation](http://wiki.ros.org/ROS/Installation)
-additional ROS pacakge
+1.1 **Ubuntu** and **ROS 2**
+Ubuntu 24.04.
+ROS 2 Jazzy. [ROS 2 Installation](https://docs.ros.org/en/jazzy/Installation.html)
+Additional ROS 2 packages:
 
 ```bash
-    sudo apt-get install ros-YOUR_DISTRO-cv-bridge ros-YOUR_DISTRO-tf ros-YOUR_DISTRO-message-filters ros-YOUR_DISTRO-image-transport
+    sudo apt-get install ros-jazzy-cv-bridge ros-jazzy-tf2-ros ros-jazzy-message-filters ros-jazzy-image-transport ros-jazzy-visualization-msgs ros-jazzy-nav-msgs
 ```
 
 1.2. **Ceres Solver**
-Follow [Ceres Installation](http://ceres-solver.org/installation.html), remember to **make install**.
-(Our testing environment: Ubuntu 16.04, ROS Kinetic, OpenCV 3.3.1, Eigen 3.3.3)
+Follow [Ceres Installation](http://ceres-solver.org/installation.html), remember to **make install**. Compatible with Ceres 2.2.0+ (utilizes the new `Manifold` API).
 
-## 2. Build VINS-Mono on ROS
+1.3 **GTSAM**
+Follow [GTSAM Installation](https://gtsam.org/get_started/).
+(Our testing environment: Ubuntu 24.04, ROS 2 Jazzy, Ceres 2.2.0, Eigen 3)
 
-Clone the repository and catkin_make:
+## 2. Build VINS-Mono on ROS 2
+
+Clone the repository and build via `colcon`:
 
 ```bash
-    cd ~/catkin_ws/src
-    git clone https://github.com/HKUST-Aerial-Robotics/VINS-Mono.git
-    cd ../
-    catkin_make
-    source ~/catkin_ws/devel/setup.bash
+    mkdir -p ~/ros2_ws/src
+    cd ~/ros2_ws/src
+    git clone https://github.com/AnshShah3009/VINS-Mono-GTSAM.git
+    cd VINS-Mono-GTSAM
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+    source install/setup.bash
 ```
 
 ## 3. Visual-Inertial Odometry and Pose Graph Reuse on Public datasets
@@ -71,20 +75,20 @@ Download [EuRoC MAV Dataset](http://projects.asl.ethz.ch/datasets/doku.php?id=km
 
 **3.1 visual-inertial odometry and loop closure**
 
-3.1.1 Open three terminals, launch the vins_estimator , rviz and play the bag file respectively. Take MH_01 for example
+3.1.1 Open three terminals, launch the vins_estimator, rviz and play the bag file respectively. Take MH_01 for example (Note: some launch files might require rewriting to ROS 2 Python format depending on setup):
 
 ```bash
-    roslaunch vins_estimator euroc.launch 
-    roslaunch vins_estimator vins_rviz.launch
-    rosbag play YOUR_PATH_TO_DATASET/MH_01_easy.bag 
+    ros2 launch vins_estimator euroc.launch 
+    ros2 launch vins_estimator vins_rviz.launch
+    ros2 bag play YOUR_PATH_TO_DATASET/MH_01_easy.bag 
 ```
 
-(If you fail to open vins_rviz.launch, just open an empty rviz, then load the config file: file -> Open Config-> YOUR_VINS_FOLDER/config/vins_rviz_config.rviz)
+(If you fail to open vins_rviz.launch, just open an empty rviz, then load the config file from `vins_estimator/config/`)
 
 3.1.2 (Optional) Visualize ground truth. We write a naive benchmark publisher to help you visualize the ground truth. It uses a naive strategy to align VINS with ground truth. Just for visualization. not for quantitative comparison on academic publications.
 
 ```
-    roslaunch benchmark_publisher publish.launch  sequence_name:=MH_05_difficult
+    ros2 launch benchmark_publisher publish.launch  sequence_name:=MH_05_difficult
 ```
 
  (Green line is VINS result, red line is ground truth).
@@ -92,7 +96,7 @@ Download [EuRoC MAV Dataset](http://projects.asl.ethz.ch/datasets/doku.php?id=km
 3.1.3 (Optional) You can even run EuRoC **without extrinsic parameters** between camera and IMU. We will calibrate them online. Replace the first command with:
 
 ```
-    roslaunch vins_estimator euroc_no_extrinsic_param.launch
+    ros2 launch vins_estimator euroc_no_extrinsic_param.launch
 ```
 
 **No extrinsic parameters** in that config file.  Waiting a few seconds for initial calibration. Sometimes you cannot feel any difference as the calibration is done quickly.
@@ -118,9 +122,9 @@ Set the **load_previous_pose_graph** to 1 before doing 3.1.1. The system will lo
 4.2 Open three terminals, launch the ar_demo, rviz and play the bag file respectively.
 
 ```
-    roslaunch ar_demo 3dm_bag.launch
-    roslaunch ar_demo ar_rviz.launch
-    rosbag play YOUR_PATH_TO_DATASET/ar_box.bag 
+    ros2 launch ar_demo 3dm_bag.launch
+    ros2 launch ar_demo ar_rviz.launch
+    ros2 bag play YOUR_PATH_TO_DATASET/ar_box.bag 
 ```
 
 We put one 0.8m x 0.8m x 0.8m virtual box in front of your view.
